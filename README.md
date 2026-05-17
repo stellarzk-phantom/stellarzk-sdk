@@ -41,45 +41,61 @@ graph LR
 
 ---
 
-# 💻 Quick Start & Usage
+# 💻 API Reference & Local Proving Playbook
 
-### 1. Installation
-Install the SDK and `@stellar/stellar-sdk` dependencies:
-```bash
-npm install @stellarzk/sdk @stellar/stellar-sdk
-```
+### 1. Initializing the ZKProver
+To execute client-side proving inside a browser or node process, instantiate the `ZKProver` pointing to the pre-compiled Circom WASM and ZKey artifacts:
 
-### 2. Generating a Private Transfer Proof
 ```typescript
-import { ZKProver, ShieldedPortalClient } from '@stellarzk/sdk';
-import { Keypair } from '@stellar/stellar-sdk';
+import { ZKProver } from 'stellarzk-sdk';
 
 const prover = new ZKProver({
-  wasmPath: './circuits/private_transfer.wasm',
-  zkeyPath: './circuits/private_transfer_final.zkey',
+  wasmPath: 'https://cdn.stellarzk.org/circuits/private_transfer.wasm',
+  zkeyPath: 'https://cdn.stellarzk.org/circuits/private_transfer_final.zkey',
+});
+```
+
+### 2. Formulating Inputs & Synthesizing the Proof
+Compile the private witnesses—the sender's keypair, the target stealth recipient, and the transfer value—and generate the Groth16 coordinates locally:
+
+```typescript
+const secretKey = 'S...';
+const recipientStealthAddress = 'zk19v82x...';
+const amount = 100n; // 100 Shielded Tokens
+
+console.log('Calculating Poseidon Commitments & Local Groth16 witness...');
+
+const { proof, publicSignals } = await prover.generateProof({
+  secret: secretKey,
+  recipient: recipientStealthAddress,
+  value: amount,
 });
 
-async function sendShieldedPayment() {
-  const secretKey = 'S...';
-  const recipientStealthAddress = 'zk19v82x...';
-  const amount = 100n; // Shielded XLM
-  
-  console.log('Generating Zero-Knowledge Proof locally...');
-  const { proof, publicSignals } = await prover.generateProof({
-    secret: secretKey,
-    recipient: recipientStealthAddress,
-    value: amount,
-  });
-  
-  // Format the parameters for the Shielded Portal
-  const client = new ShieldedPortalClient({ contractId: 'CDA...' });
-  const txHash = await client.submitShieldedTransfer({
-    proof,
-    publicInputs: publicSignals,
-  });
-  
-  console.log(`Private transfer submitted! Tx Hash: ${txHash}`);
-}
+console.log('Proof successfully generated locally! Coordinates:', proof.pi_a);
+```
+
+### 3. Formatting Parameters for Soroban Contracts
+The SDK automatically formats the large field elements (coordinates on curves) into byte arrays compatible with Soroban XDR types:
+
+```typescript
+import { ShieldedPortalClient } from 'stellarzk-sdk';
+
+const client = new ShieldedPortalClient({
+  contractId: 'CDA...',
+  rpcUrl: 'https://soroban-testnet.stellar.org',
+});
+
+// Converts mathematical arrays to Soroban Vec<Val> and BytesN
+const txParams = prover.formatSorobanParameters(proof, publicSignals);
+
+const txHash = await client.submitShieldedTransfer({
+  proofA: txParams.proofA, // BytesN<64>
+  proofB: txParams.proofB, // BytesN<128>
+  proofC: txParams.proofC, // BytesN<64>
+  publicInputs: txParams.publicInputs, // Vec<Val>
+});
+
+console.log(`Shielded transaction submitted successfully! Tx: ${txHash}`);
 ```
 
 ---
@@ -90,6 +106,8 @@ async function sendShieldedPayment() {
 stellarzk-sdk/
 ├── src/
 │   ├── prover/           # WASM circuit and SnarkJS integrations
+│   │   ├── ZKProver.ts   # Core client-side Groth16 provers
+│   │   └── types.rs      # Proof coordinate interfaces
 │   ├── portal/           # ShieldedPortalClient parameter wrappers
 │   ├── utils/            # Hashing and field mathematics
 │   └── index.ts          # Module exports entry point
